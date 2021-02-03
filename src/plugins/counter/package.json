@@ -1,8 +1,8 @@
 {
-  "name": "blacklist",
+  "name": "counter",
   "private": true,
-  "version": "0.1.0",
-  "description": "黑名单",
+  "version": "0.0.1",
+  "description": "计数器",
   "el-bot": {
     "db": true
   },

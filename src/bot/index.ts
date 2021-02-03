@@ -17,28 +17,31 @@ import { sleep, statement } from "../utils/misc";
 import { connectDb } from "../db";
 import chalk from "chalk";
 import commander from "commander";
-import { resolve } from "path";
 import mongoose from "mongoose";
+import { Server } from "net";
+// shared
+import { isFunction } from "../shared";
 
-interface PackageJson {
-  name: string;
-  version: string;
-  [propName: string]: any;
+// type
+import type { Plugin } from "./plugins";
+
+/**
+ * 创建机器人
+ * @param el
+ */
+export function createBot(el: El) {
+  return new Bot(el);
 }
 
 export default class Bot {
   el: El;
   mirai: MiraiInstance;
   // 激活
-  active: boolean;
+  active = true;
   /**
    * 数据库，默认使用 MongoDB
    */
   db?: mongoose.Connection;
-  /**
-   * package.json
-   */
-  pkg: PackageJson;
   /**
    * 状态
    */
@@ -56,6 +59,10 @@ export default class Bot {
    */
   plugins: Plugins;
   /**
+   * 已按照的插件
+   */
+  installedPlugins = new Set();
+  /**
    * 指令系统
    */
   cli: commander.Command;
@@ -67,10 +74,9 @@ export default class Bot {
   /**
    * 是否开发模式下
    */
-  isDev: boolean;
+  isDev = process.env.NODE_ENV !== "production";
   constructor(el: El) {
     this.el = new El(el);
-
     const setting = this.el.setting;
     const mahConfig: MiraiApiHttpConfig = {
       host: setting.host || "localhost",
@@ -79,16 +85,12 @@ export default class Bot {
       enableWebsocket: setting.enableWebsocket || false,
     };
     this.mirai = new Mirai(mahConfig);
-    this.pkg = require(resolve(process.cwd(), "./package.json"));
-    this.active = true;
     this.status = new Status(this);
     this.user = new User(this);
     this.sender = new Sender(this);
     this.plugins = new Plugins(this);
     this.webhook = new Webhook(this);
     this.cli = initCli(this, "el");
-
-    this.isDev = process.env.NODE_ENV === "dev";
   }
 
   /**
@@ -104,18 +106,12 @@ export default class Bot {
   }
 
   /**
-   * 加载自定义函数插件
-   */
-  use(name: string, plugin: Function) {
-    this.plugins.use(name, plugin);
-  }
-
-  /**
    * 自动重连
    */
   async link() {
     try {
       await this.mirai.link(this.el.qq);
+      return true;
     } catch (err) {
       this.logger.error(err.message);
       await sleep(3000);
@@ -149,6 +145,7 @@ export default class Bot {
     await this.link();
 
     // 加载插件
+    this.logger.info("开始加载插件");
     this.plugins.load("default");
     this.plugins.load("official");
     this.plugins.load("community");
@@ -157,15 +154,10 @@ export default class Bot {
     this.mirai.listen();
 
     // 启动 webhook
+    let server: Server | undefined;
     if (this.el.webhook.enable) {
       try {
-        const server = this.webhook.start();
-        process.on("exit", () => {
-          // 关闭 koa server
-          if (server) {
-            server.close();
-          }
-        });
+        server = this.webhook.start();
       } catch (err) {
         this.logger.error(err.message);
       }
@@ -179,8 +171,50 @@ export default class Bot {
         this.logger.info("[db] 关闭数据库连接");
       }
 
+      // close koa server
+      if (this.el.webhook.enable) {
+        if (server) {
+          server.close();
+          this.logger.info("[webhook] 关闭 Server");
+        }
+      }
+
       this.logger.warning("Bye, Master!");
       this.mirai.release();
+    });
+  }
+
+  /**
+   * 加载自定义函数插件（但不注册）
+   * 注册请使用 .plugin
+   * 与 this.plugin.use() 的区别是此部分的插件将不会显示在插件列表中
+   */
+  use(plugin: Plugin, ...options: any[]) {
+    const installedPlugins = this.installedPlugins;
+    if (installedPlugins.has(plugin)) {
+      this.isDev && this.logger.warn("插件已经被安装");
+    } else if (plugin && isFunction(plugin.install)) {
+      installedPlugins.add(plugin);
+      plugin.install(this, ...options);
+    } else if (isFunction(plugin)) {
+      installedPlugins.add(plugin);
+      plugin(this, ...options);
+    } else if (this.isDev) {
+      this.logger.warn('插件必须是一个函数，或是带有 "install" 属性的对象。');
+    }
+    return this;
+  }
+
+  /**
+   * 注册插件
+   * @param name 插件名称
+   * @param plugin 插件函数
+   * @param options 插件选项
+   */
+  plugin(name: string, plugin: Plugin, ...options: any[]) {
+    this.plugins.add(name, plugin, ...options);
+    this.plugins["custom"].add({
+      name,
     });
   }
 }

@@ -1,42 +1,9 @@
+import Bot from "el-bot";
 import { renderString } from "../../utils/index";
 import { MessageType, check } from "mirai-ts";
-import Bot from "../../bot";
 import axios from "axios";
-import * as Config from "../../types/config";
 import nodeSchdule from "node-schedule";
-
-interface BaseAnswerOptions extends check.Match {
-  /**
-   * 监听
-   */
-  listen: string | Config.Listen;
-  /**
-   * 不监听
-   */
-  unlisten?: Config.Listen;
-  /**
-   * 定时任务
-   */
-  cron?: nodeSchdule.RecurrenceRule;
-  /**
-   * 定时发送的对象
-   */
-  target: Config.Target;
-  /**
-   * API 地址，存在时，自动渲染字符串
-   */
-  api?: string;
-  reply: string | MessageType.MessageChain;
-  /**
-   * 只有被 @ 时回复
-   */
-  at?: boolean;
-  /**
-   * 回复时是否引用消息
-   */
-  quote?: boolean;
-  else?: string | MessageType.MessageChain;
-}
+import { displayAnswerList, AnswerOptions } from "./utils";
 
 /**
  * 根据 API 返回的内容渲染字符串
@@ -60,11 +27,19 @@ async function renderStringByApi(
   }
 }
 
-type AnswerOptions = BaseAnswerOptions[];
-
 export default function (ctx: Bot, options: AnswerOptions) {
-  const { mirai } = ctx;
+  const { mirai, cli } = ctx;
   if (!options) return;
+
+  cli
+    .command("answer")
+    .option("-l --list")
+    .action((opts) => {
+      if (opts.list) {
+        const answerList = displayAnswerList(options);
+        ctx.reply(answerList);
+      }
+    });
 
   // 设置定时
   options.forEach((ans) => {
@@ -99,7 +74,7 @@ export default function (ctx: Bot, options: AnswerOptions) {
         } else if (ans.else) {
           // 后续可以考虑用监听白名单、黑名单优化
           replyContent = ans.api
-            ? renderStringByApi(ans.api, ans.else)
+            ? await renderStringByApi(ans.api, ans.else)
             : ans.else;
         }
 
